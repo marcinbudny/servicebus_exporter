@@ -10,19 +10,46 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	sb "github.com/marcinbudny/servicebus_exporter/client"
+	"github.com/marcinbudny/servicebus_exporter/collector"
 )
 
 var (
 	log = logrus.New()
-
-	timeout time.Duration
-	port    uint
-	verbose bool
-
-	connectionString string
 )
 
-func serveLandingPage() {
+type config struct {
+	timeout          time.Duration
+	port             uint
+	verbose          bool
+	connectionString string
+}
+
+func readAndValidateConfig() config {
+	var result config
+
+	flag.StringVar(&result.connectionString, "connection-string", "", "Azure ServiceBus connection string")
+	flag.UintVar(&result.port, "port", 9999, "Port to expose scraping endpoint on")
+	flag.DurationVar(&result.timeout, "timeout", time.Second*30, "Timeout for scrape")
+	flag.BoolVar(&result.verbose, "verbose", false, "Enable verbose logging")
+
+	flag.Parse()
+
+	if result.connectionString == "" {
+		log.Fatal("Azure ServiceBus connection string not provided")
+	}
+
+	log.WithFields(logrus.Fields{
+		"port":    result.port,
+		"timeout": result.timeout,
+		"verbose": result.verbose,
+	}).Infof("Azure ServiceBus exporter configured")
+
+	return result
+}
+
+func configureRoutes() {
 	var landingPage = []byte(`<html>
 		<head><title>Azure ServiceBus exporter for Prometheus</title></head>
 		<body>
@@ -35,51 +62,31 @@ func serveLandingPage() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(landingPage) // nolint: errcheck
 	})
-}
-
-func serveMetrics() {
-	prometheus.MustRegister(newExporter())
 
 	http.Handle("/metrics", promhttp.Handler())
 }
 
-func readAndValidateConfig() {
-	flag.StringVar(&connectionString, "connection-string", "", "Azure ServiceBus connection string")
-	flag.UintVar(&port, "port", 9999, "Port to expose scraping endpoint on")
-	flag.DurationVar(&timeout, "timeout", time.Second*30, "Timeout for scrape")
-	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging")
-
-	flag.Parse()
-
-	if connectionString == "" {
-		log.Fatal("Azure ServiceBus connection string not provided")
-	}
-
-	log.WithFields(logrus.Fields{
-		"port":    port,
-		"timeout": timeout,
-		"verbose": verbose,
-	}).Infof("Azure ServiceBus exporter configured")
-}
-
-func setupLogger() {
-	if verbose {
+func setupLogger(config config) {
+	if config.verbose {
 		log.Level = logrus.DebugLevel
 	}
 }
 
-func startHTTPServer() {
-	listenAddr := fmt.Sprintf(":%d", port)
+func startHTTPServer(config config) {
+	listenAddr := fmt.Sprintf(":%d", config.port)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
 
 func main() {
 
-	readAndValidateConfig()
-	setupLogger()
+	config := readAndValidateConfig()
+	setupLogger(config)
 
-	serveLandingPage()
-	serveMetrics()
+	configureRoutes()
 
-	startHTTPServer()
+	client := sb.New(config.connectionString, config.timeout)
+	coll := collector.New(client, log)
+	prometheus.MustRegister(coll)
+
+	startHTTPServer(config)
 }
