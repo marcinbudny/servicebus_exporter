@@ -30,7 +30,7 @@ func readAndValidateConfig() config {
 	var result config
 
 	flag.StringVar(&result.connectionString, "connection-string", "", "Azure ServiceBus connection string")
-	flag.UintVar(&result.port, "port", 9999, "Port to expose scraping endpoint on")
+	flag.UintVar(&result.port, "port", 9580, "Port to expose scraping endpoint on")
 	flag.DurationVar(&result.timeout, "timeout", time.Second*30, "Timeout for scrape")
 	flag.BoolVar(&result.verbose, "verbose", false, "Enable verbose logging")
 
