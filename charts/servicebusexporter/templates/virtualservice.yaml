@@ -1,0 +1,35 @@
+{{- if .Values.virtualservice.enabled }}
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ include "servicebusexporter.fullname" . }}
+  labels:
+{{ include "servicebusexporter.labels" . | indent 4 }}
+spec:
+  hosts:
+  {{- if $host := .Values.virtualservice.hosts }}
+  {{- range $host := .Values.virtualservice.hosts }}
+  - {{ $host | quote }}
+  {{- end }}
+  {{- else }}
+  - {{ include "servicebusexporter.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  - {{ include "servicebusexporter.fullname" . }}.{{ .Release.Namespace }}.svc.cluster
+  - {{ include "servicebusexporter.fullname" . }}.{{ .Release.Namespace }}.svc
+  - {{ include "servicebusexporter.fullname" . }}.{{ .Release.Namespace }}
+  - {{ include "servicebusexporter.fullname" . }}
+  {{- end }}
+  {{- if $gateway := .Values.virtualservice.gateways }}
+  gateways:
+  {{- range $gateway := .Values.virtualservice.gateways }}
+  - {{ $gateway | quote }}
+  {{- end }}
+  {{- end }}
+  http:
+  - match:
+{{- toYaml .Values.virtualservice.matches | nindent 4 -}}
+    route:
+    - destination:
+        port:
+          number: {{ .Values.service.port }}
+        host: {{ include "servicebusexporter.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+{{- end }}

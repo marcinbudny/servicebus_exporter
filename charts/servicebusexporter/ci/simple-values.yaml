@@ -1,0 +1,2 @@
+# fake value so the chart installs
+connectionString: "Endpoint=sb://foobar123456.servicebus.windows.net/;SharedAccessKeyName=foobar123456-role;SharedAccessKey=anNkZmtqbGZsamtzZGZqa2xsa2pmc2FkbGtqZmpzYWxrZmpzYWxmZHNhamZsYXNmYXNmc2Rh"
