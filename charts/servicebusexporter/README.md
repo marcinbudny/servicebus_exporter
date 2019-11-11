@@ -7,7 +7,9 @@ subscriptions.
 ## TL;DR;
 
 ```console
-$ helm install giggio/servicebusprometheusexporter
+$ helm repo add sbe https://giggio.github.io/servicebus_exporter/
+$ helm repo update
+$ helm install sbe/servicebusexporter
 ```
 
 ## Introduction
@@ -19,12 +21,21 @@ This chart bootstraps a [Azure Service Bus Prometheus exporter](https://github.c
 - Kubernetes 1.12+
 - Helm 2.11+ or Helm 3.0-beta3+
 
+## Add the repo
+
+Add the help repo:
+
+```console
+$ helm repo add sbe https://giggio.github.io/servicebus_exporter/
+$ helm repo update
+```
+
 ## Installing the Chart
 
 To install the chart with the release name `my-release`:
 
 ```console
-$ helm install --name my-release giggio/servicebusprometheusexporter
+$ helm install --name my-release sbe/servicebusexporter
 ```
 
 The command deploys Azure Service Bus Prometheus exporter on the Kubernetes cluster in the default configuration. The [Parameters](#parameters) section lists the parameters that can be configured during installation.
@@ -85,7 +96,7 @@ Specify each parameter using the `--set key=value[,key=value]` argument to `helm
 ```console
 $ helm install --name my-release \
   --set 'connectionString=<your connection string>' \
-    giggio/servicebusprometheusexporter
+    sbe/servicebusexporter
 ```
 
 The above command sets the connection string to `<your connection string>`.
@@ -93,7 +104,7 @@ The above command sets the connection string to `<your connection string>`.
 Alternatively, a YAML file that specifies the values for the above parameters can be provided while installing the chart. For example,
 
 ```console
-$ helm install --name my-release -f values.yaml giggio/servicebusprometheusexporter
+$ helm install --name my-release -f values.yaml sbe/serviceexporter
 ```
 
 > **Tip**: You can use the default [values.yaml](values.yaml).

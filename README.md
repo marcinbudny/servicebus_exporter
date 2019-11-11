@@ -2,6 +2,8 @@
 
 This is a fork from https://github.com/marcinbudny/servicebus_exporter, just for the Helm Chart.
 
+See [the chart readme](https://github.com/giggio/servicebus_exporter/blob/helmchart/charts/servicebusexporter/README.md).
+
 # Azure Service Bus Prometheus exporter
 Azure Service Bus metrics Prometheus exporter. Does not use Azure Monitor, connects to the Service Bus directly and scrapes all queues, topics and subscriptions.
 
