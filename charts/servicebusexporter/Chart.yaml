@@ -1,0 +1,11 @@
+apiVersion: v1
+appVersion: "0.1.0"
+description: Azure Service Bus exporter for Prometheus
+name: servicebusexporter
+version: 0.0.1
+home: https://github.com/giggio/servicebus_exporter
+sources:
+- https://github.com/giggio/servicebus_exporter
+maintainers:
+- name: giggio
+  email: giggio@giggio.net
