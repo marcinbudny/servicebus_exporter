@@ -1,3 +1,4 @@
 *.exe
 .git
 debug
+servicebus_exporter
