@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/namsral/flag"
-	"github.com/sirupsen/logrus"
+	"flag"
+
+	klog "k8s.io/klog/v2"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -15,14 +16,9 @@ import (
 	"github.com/marcinbudny/servicebus_exporter/collector"
 )
 
-var (
-	log = logrus.New()
-)
-
 type config struct {
 	timeout          time.Duration
 	port             uint
-	verbose          bool
 	connectionString string
 }
 
@@ -32,19 +28,12 @@ func readAndValidateConfig() config {
 	flag.StringVar(&result.connectionString, "connection-string", "", "Azure ServiceBus connection string")
 	flag.UintVar(&result.port, "port", 9580, "Port to expose scraping endpoint on")
 	flag.DurationVar(&result.timeout, "timeout", time.Second*30, "Timeout for scrape")
-	flag.BoolVar(&result.verbose, "verbose", false, "Enable verbose logging")
 
 	flag.Parse()
 
 	if result.connectionString == "" {
-		log.Fatal("Azure ServiceBus connection string not provided")
+		klog.Fatal("Azure ServiceBus connection string not provided")
 	}
-
-	log.WithFields(logrus.Fields{
-		"port":    result.port,
-		"timeout": result.timeout,
-		"verbose": result.verbose,
-	}).Infof("Azure ServiceBus exporter configured")
 
 	return result
 }
@@ -66,26 +55,19 @@ func configureRoutes() {
 	http.Handle("/metrics", promhttp.Handler())
 }
 
-func setupLogger(config config) {
-	if config.verbose {
-		log.Level = logrus.DebugLevel
-	}
-}
-
 func startHTTPServer(config config) {
 	listenAddr := fmt.Sprintf(":%d", config.port)
-	log.Fatal(http.ListenAndServe(listenAddr, nil))
+	klog.Fatal(http.ListenAndServe(listenAddr, nil))
 }
 
 func main() {
-
+	klog.InitFlags(nil)
 	config := readAndValidateConfig()
-	setupLogger(config)
 
 	configureRoutes()
 
 	client := sb.New(config.connectionString, config.timeout)
-	coll := collector.New(client, log)
+	coll := collector.New(client)
 	prometheus.MustRegister(coll)
 
 	startHTTPServer(config)

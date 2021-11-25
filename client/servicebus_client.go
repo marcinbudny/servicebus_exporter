@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
+	"sync"
 	"time"
 
-	servicebus "github.com/Azure/azure-service-bus-go"
+	azservicebus "github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus/admin"
+	"k8s.io/klog/v2"
 )
 
 type ServiceBusClient struct {
@@ -23,6 +25,7 @@ type MessageCounts struct {
 	ScheduledMessages          int32
 	TransferDeadLetterMessages int32
 	TransferMessages           int32
+	TotalMessageCount          int64
 }
 
 type Sizes struct {
@@ -59,17 +62,17 @@ func (c *ServiceBusClient) GetServiceBusStats() (*Stats, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	ns, err := servicebus.NewNamespace(servicebus.NamespaceWithConnectionString(c.connectionString))
+	client, err := azservicebus.NewClientFromConnectionString(c.connectionString, &azservicebus.ClientOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	queues, err := getQueueStats(ctx, ns)
+	queues, err := getQueueStats(ctx, client)
 	if err != nil {
 		return nil, err
 	}
 
-	topics, err := getTopicStats(ctx, ns)
+	topics, err := getTopicStats(ctx, client)
 	if err != nil {
 		return nil, err
 	}
@@ -81,96 +84,132 @@ func (c *ServiceBusClient) GetServiceBusStats() (*Stats, error) {
 
 }
 
-func getQueueStats(ctx context.Context, ns *servicebus.Namespace) (*[]QueueStats, error) {
+func getQueueStats(ctx context.Context, client *azservicebus.Client) (*[]QueueStats, error) {
 	var result []QueueStats
 
-	queueManager := ns.NewQueueManager()
+	queues := client.ListQueues(&azservicebus.ListQueuesOptions{MaxPageSize: 50})
+	for {
+		gotPage := queues.NextPage(ctx)
+		if !gotPage {
+			break
+		}
+		klog.V(3).InfoS("loading queue page", "itemCount", len(queues.PageResponse().Items))
 
-	queues, err := queueManager.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, queue := range queues {
-		result = append(result, QueueStats{
-			Name: queue.Name,
-			MessageCounts: MessageCounts{
-				ActiveMessages:             *queue.CountDetails.ActiveMessageCount,
-				DeadLetterMessages:         *queue.CountDetails.DeadLetterMessageCount,
-				ScheduledMessages:          *queue.CountDetails.ScheduledMessageCount,
-				TransferDeadLetterMessages: *queue.CountDetails.TransferDeadLetterMessageCount,
-				TransferMessages:           *queue.CountDetails.TransferMessageCount,
-			},
-			Sizes: Sizes{
-				SizeInBytes:    *queue.QueueDescription.SizeInBytes,
-				MaxSizeInBytes: int64(*queue.QueueDescription.MaxSizeInMegabytes) * 1024 * 1024,
-			},
-		})
+		for _, queue := range queues.PageResponse().Items {
+			queueStats, err := client.GetQueueRuntimeProperties(ctx, queue.QueueName, &azservicebus.GetQueueRuntimePropertiesOptions{})
+			if err != nil {
+				continue
+			}
+			result = append(result, QueueStats{
+				Name: queue.QueueName,
+				MessageCounts: MessageCounts{
+					ActiveMessages:             queueStats.ActiveMessageCount,
+					DeadLetterMessages:         queueStats.DeadLetterMessageCount,
+					ScheduledMessages:          queueStats.ScheduledMessageCount,
+					TransferDeadLetterMessages: queueStats.TransferDeadLetterMessageCount,
+					TransferMessages:           queueStats.TransferMessageCount,
+				},
+				Sizes: Sizes{
+					SizeInBytes:    queueStats.SizeInBytes,
+					MaxSizeInBytes: int64(*queue.MaxSizeInMegabytes) * 1024 * 1024,
+				},
+			})
+		}
 	}
 
 	return &result, nil
 }
 
-func getTopicStats(ctx context.Context, ns *servicebus.Namespace) (*[]TopicStats, error) {
+func getTopicStats(ctx context.Context, client *azservicebus.Client) (*[]TopicStats, error) {
 	var result []TopicStats
 
-	topicManager := ns.NewTopicManager()
+	topics := client.ListTopics(&azservicebus.ListTopicsOptions{MaxPageSize: 25})
 
-	topics, err := topicManager.List(ctx)
-	if err != nil {
-		return nil, err
-	}
+	for {
+		gotPage := topics.NextPage(ctx)
+		if !gotPage {
+			break
+		}
+		klog.V(3).InfoS("loading topic page", "itemCount", len(topics.PageResponse().Items))
 
-	for _, topic := range topics {
+		var wg sync.WaitGroup
+		var mutex sync.Mutex
+		s := make([][]SubscriptionStats, len(topics.PageResponse().Items))
+		for i, topic := range topics.PageResponse().Items {
+			wg.Add(1)
 
-		subs, err := getSubscriptionStats(ctx, ns, topic.Name)
-		if err != nil {
-			return nil, err
+			go func(topicName string, output [][]SubscriptionStats, i int) {
+				defer wg.Done()
+				subStats, err := getSubscriptionStats(ctx, client, topicName)
+				if err != nil {
+					return
+				}
+
+				mutex.Lock()
+				defer mutex.Unlock()
+				output[i] = *subStats
+			}(topic.TopicName, s, i)
 		}
 
-		result = append(result, TopicStats{
-			Name:          topic.Name,
-			MessageCounts: countDetailsToMessageCounts(topic.CountDetails),
-			Sizes: Sizes{
-				SizeInBytes:    *topic.TopicDescription.SizeInBytes,
-				MaxSizeInBytes: int64(*topic.TopicDescription.MaxSizeInMegabytes) * 1024 * 1024,
-			},
-			Subscriptions: subs,
-		})
+		wg.Wait()
+
+		for i, topic := range topics.PageResponse().Items {
+			topicStats, err := client.GetTopicRuntimeProperties(ctx, topic.TopicName, &azservicebus.GetTopicRuntimePropertiesOptions{})
+			if err != nil {
+				continue
+			}
+
+			sub := &s[i]
+
+			result = append(result, TopicStats{
+				Name:          topic.TopicName,
+				MessageCounts: MessageCounts{},
+				Sizes: Sizes{
+					SizeInBytes:    topicStats.SizeInBytes,
+					MaxSizeInBytes: int64(*topic.MaxSizeInMegabytes) * 1024 * 1024,
+				},
+				Subscriptions: sub,
+			})
+		}
 	}
 
 	return &result, nil
 }
 
-func getSubscriptionStats(ctx context.Context, ns *servicebus.Namespace, topicName string) (*[]SubscriptionStats, error) {
+func getSubscriptionStats(ctx context.Context, client *azservicebus.Client, topicName string) (*[]SubscriptionStats, error) {
 	var result []SubscriptionStats
 
-	subsManager, err := ns.NewSubscriptionManager(topicName)
-	if err != nil {
-		return nil, err
-	}
+	subs := client.ListSubscriptions(topicName, &azservicebus.ListSubscriptionsOptions{MaxPageSize: 50})
 
-	subs, err := subsManager.List(ctx)
-	if err != nil {
-		return nil, err
-	}
+	for {
+		gotPage := subs.NextPage(ctx)
+		if !gotPage {
+			break
+		}
+		klog.V(3).InfoS("loading topic subscription page", "itemCount", len(subs.PageResponse().Items))
 
-	for _, sub := range subs {
-		result = append(result, SubscriptionStats{
-			Name:          sub.Name,
-			MessageCounts: countDetailsToMessageCounts(sub.CountDetails),
-		})
+		for _, sub := range subs.PageResponse().Items {
+			runtimeProps, err := client.GetSubscriptionRuntimeProperties(ctx, topicName, sub.SubscriptionName, &azservicebus.GetSubscriptionRuntimePropertiesOptions{})
+			if err != nil {
+				continue
+			}
+
+			result = append(result, SubscriptionStats{
+				Name:          sub.SubscriptionName,
+				MessageCounts: countDetailsToMessageCounts(runtimeProps),
+			})
+		}
 	}
 
 	return &result, nil
 }
 
-func countDetailsToMessageCounts(countDetails *servicebus.CountDetails) MessageCounts {
+func countDetailsToMessageCounts(countDetails *azservicebus.GetSubscriptionRuntimePropertiesResponse) MessageCounts {
 	return MessageCounts{
-		ActiveMessages:             *countDetails.ActiveMessageCount,
-		DeadLetterMessages:         *countDetails.DeadLetterMessageCount,
-		ScheduledMessages:          *countDetails.ScheduledMessageCount,
-		TransferDeadLetterMessages: *countDetails.TransferDeadLetterMessageCount,
-		TransferMessages:           *countDetails.TransferMessageCount,
+		ActiveMessages:             countDetails.ActiveMessageCount,
+		DeadLetterMessages:         countDetails.DeadLetterMessageCount,
+		TotalMessageCount:          countDetails.TotalMessageCount,
+		TransferDeadLetterMessages: countDetails.TransferDeadLetterMessageCount,
+		TransferMessages:           countDetails.TransferMessageCount,
 	}
 }
