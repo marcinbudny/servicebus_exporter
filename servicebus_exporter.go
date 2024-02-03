@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
-	"github.com/namsral/flag"
+	"github.com/peterbourgon/ff/v3"
+
 	"github.com/sirupsen/logrus"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,12 +32,16 @@ type config struct {
 func readAndValidateConfig() config {
 	var result config
 
+	flag := flag.NewFlagSet("servicebus_exporter", flag.ExitOnError)
+
 	flag.StringVar(&result.connectionString, "connection-string", "", "Azure ServiceBus connection string")
 	flag.UintVar(&result.port, "port", 9580, "Port to expose scraping endpoint on")
 	flag.DurationVar(&result.timeout, "timeout", time.Second*30, "Timeout for scrape")
 	flag.BoolVar(&result.verbose, "verbose", false, "Enable verbose logging")
 
-	flag.Parse()
+	ff.Parse(flag, os.Args[1:],
+		ff.WithEnvVarNoPrefix(),
+	)
 
 	if result.connectionString == "" {
 		log.Fatal("Azure ServiceBus connection string not provided")
